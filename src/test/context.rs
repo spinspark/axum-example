@@ -1,6 +1,6 @@
 use crate::sqlite::Sqlite;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
-use rand::Rng;
+use rand::RngExt;
 
 const TEST_MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/test/");
 
