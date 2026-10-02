@@ -1,54 +1,56 @@
-use diesel::{ExpressionMethods, Insertable, QueryDsl, Queryable, Selectable, SelectableHelper};
 use serde::{Deserialize, Serialize};
+use sqlx::{FromRow, SqlitePool};
 
-use crate::schema::tags;
-
-type All = diesel::dsl::Select<tags::table, diesel::dsl::AsSelect<Tag, diesel::sqlite::Sqlite>>;
-type ById = diesel::dsl::Find<All, i32>;
-type WithLabel<'a> = diesel::dsl::Eq<tags::label, &'a str>;
-type ByLabel<'a> = diesel::dsl::Filter<All, WithLabel<'a>>;
-type DeleteById = crate::helper_types::Delete<diesel::dsl::Find<tags::table, i32>>;
-type Insert = crate::helper_types::Insert<tags::table, NewTag>;
-
-#[derive(Debug, Serialize, Queryable, Selectable)]
-#[diesel(table_name = crate::schema::tags)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[derive(Debug, Serialize, FromRow)]
 pub struct Tag {
     id: i32,
     label: String,
 }
 
 impl Tag {
-    pub fn all() -> All {
-        tags::table.select(Self::as_select())
+    pub async fn find_all(pool: &SqlitePool) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as("SELECT id, label FROM tags")
+            .fetch_all(pool)
+            .await
     }
 
-    pub fn by_id(id: i32) -> ById {
-        Self::all().find(id)
+    pub async fn find_by_id(id: i32, pool: &SqlitePool) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as("SELECT id, label FROM tags WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
     }
 
-    pub fn with_label(label: &str) -> WithLabel<'_> {
-        tags::label.eq(label)
+    pub async fn find_by_label(
+        label: &str,
+        pool: &SqlitePool,
+    ) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as("SELECT id, label FROM tags WHERE label = ?")
+            .bind(label)
+            .fetch_optional(pool)
+            .await
     }
 
-    pub fn by_label(label: &str) -> ByLabel<'_> {
-        Self::all().filter(Self::with_label(label))
-    }
+    pub async fn delete_by_id(id: i32, pool: &SqlitePool) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query("DELETE FROM tags WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await?;
 
-    pub fn delete_by_id(id: i32) -> DeleteById {
-        diesel::delete(tags::table.find(id))
+        Ok(result.rows_affected() > 0)
     }
 }
 
-#[derive(Debug, Deserialize, Insertable)]
-#[diesel(table_name = crate::schema::tags)]
-#[diesel(check_for_backend(diesel::sqlite::Sqlite))]
+#[derive(Debug, Deserialize)]
 pub struct NewTag {
     pub label: String,
 }
 
 impl NewTag {
-    pub fn insert(self) -> Insert {
-        diesel::insert_into(tags::table).values(self)
+    pub async fn insert(self, pool: &SqlitePool) -> Result<Tag, sqlx::Error> {
+        sqlx::query_as("INSERT INTO tags (label) VALUES (?) RETURNING id, label")
+            .bind(&self.label)
+            .fetch_one(pool)
+            .await
     }
 }

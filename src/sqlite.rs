@@ -1,34 +1,25 @@
 use anyhow::Context;
-use diesel::SqliteConnection;
-use diesel::r2d2::ConnectionManager;
-use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
+use sqlx::SqlitePool;
+use sqlx::migrate::Migrator;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
+use std::str::FromStr;
 
-type Pool = diesel::r2d2::Pool<diesel::r2d2::ConnectionManager<diesel::SqliteConnection>>;
-type Connection = diesel::r2d2::PooledConnection<diesel::r2d2::ConnectionManager<SqliteConnection>>;
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations/sqlite");
 
-const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/sqlite/");
+pub async fn establish_pool(path: &str) -> anyhow::Result<SqlitePool> {
+    let opts = SqliteConnectOptions::from_str(path)
+        .with_context(|| format!("Invalid database path {path}"))?
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Normal);
+    let pool = SqlitePool::connect_with(opts)
+        .await
+        .with_context(|| format!("Failed to open database at {path}"))?;
 
-#[derive(Debug, Clone)]
-pub struct Sqlite {
-    pool: Pool,
-}
+    MIGRATOR
+        .run(&pool)
+        .await
+        .context("Failed to run migrations on database")?;
 
-impl Sqlite {
-    pub fn new(path: &str) -> anyhow::Result<Self> {
-        let manager = ConnectionManager::<SqliteConnection>::new(path);
-        let pool = Pool::builder()
-            .build(manager)
-            .with_context(|| format!("Failed to open database at {path}"))?;
-
-        pool.get()?
-            .run_pending_migrations(MIGRATIONS)
-            .map_err(|err| anyhow::anyhow!(err))
-            .context("Failed to run migrations on database")?;
-
-        Ok(Self { pool })
-    }
-
-    pub fn connection(&self) -> anyhow::Result<Connection> {
-        self.pool.get().context("Failed to get database connection")
-    }
+    Ok(pool)
 }
